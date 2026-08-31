@@ -32,7 +32,7 @@ source:
       - patches/0003-kokkos-build-cuda-fatbins.patch
 
 build:
-  number: 5
+  number: 6
   # Kokkos calls the CUDA driver API directly.  The real libcuda is supplied
   # by the host NVIDIA driver rather than by a conda runtime package.
   missing_dso_whitelist:
@@ -96,6 +96,9 @@ requirements:
     # prefix; provide the nvvm target symlink in the host environment as well
     # as the compiler's build environment.
     - cuda-nvvm-dev_{{ target_platform }}  # [cuda_compiler_version != "None"]
+    # The CUDA compiler identification source includes this header, which is
+    # shipped by the target-specific NVCC development package.
+    - cuda-nvcc-dev_{{ target_platform }}  # [cuda_compiler_version != "None"]
     - cuda-version {{ cuda_compiler_version }}  # [cuda_compiler_version != "None"]
     # require by pytorch
     - libcublas-dev    # [cuda_compiler_version != "None"]
