@@ -11,6 +11,10 @@ elif [[ ${cuda_compiler_version} == 11.8 ]]; then
 elif [[ ${cuda_compiler_version} == 12.* ]]; then
     export TORCH_CUDA_ARCH_LIST="5.0;6.0;6.1;7.0;7.5;8.0;8.6;8.9;9.0;10.0;12.0+PTX"
     DEEPMD_KOKKOS_ARCH=MAXWELL50
+elif [[ ${cuda_compiler_version} == 13.* ]]; then
+    # CUDA 13 dropped pre-Turing targets and renamed sm_101 to sm_110.
+    export TORCH_CUDA_ARCH_LIST="7.5;8.0;8.6;8.9;9.0;10.0;11.0;12.0+PTX"
+    DEEPMD_KOKKOS_ARCH=TURING75
 elif [[ ${cuda_compiler_version} != "None" ]]; then
     echo "unsupported cuda version."
     exit 1
@@ -21,9 +25,13 @@ if [[ ${cuda_compiler_version} != "None" ]]; then
     DP_VARIANT=cuda
 
     # Build Kokkos from the LAMMPS source tree so the plugin and LAMMPS share
-    # one Kokkos ABI.  Native cubins avoid driver JIT on supported GPUs.
-    DEEPMD_KOKKOS_CUDA_ARCHITECTURES=${TORCH_CUDA_ARCH_LIST//./}
-    DEEPMD_KOKKOS_CUDA_ARCHITECTURES=${DEEPMD_KOKKOS_CUDA_ARCHITECTURES//+PTX/}
+    # one Kokkos ABI.  The nvcc activation script supplies the exact real and
+    # virtual targets, including CUDA 13 suffixes such as 100f.
+    if [[ -z ${CUDAARCHS:-} ]]; then
+        echo "CUDAARCHS was not set by the CUDA compiler activation script."
+        exit 1
+    fi
+    DEEPMD_KOKKOS_CUDA_ARCHITECTURES=${CUDAARCHS}
     KOKKOS_INSTALL_PREFIX=${SRC_DIR}/kokkos-install
     cmake -S ${SRC_DIR}/lammps/lib/kokkos \
           -B ${SRC_DIR}/kokkos-build \
