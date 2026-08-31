@@ -7,8 +7,8 @@ pin_run_as_build:
     max_pin: x.x
 
 tensorflow:
-- '2.19'
+- '2.21'
 libtensorflow_cc:
-- '2.19'
+- '2.21'
 libabseil:
 - '20260107'

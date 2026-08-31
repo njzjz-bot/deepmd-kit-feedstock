@@ -1,6 +1,6 @@
 {% set name = "deepmd-kit" %}
 {% set version = "3.2.0" %}
-{% set lammps_version = "stable_29Aug2024" %}
+{% set lammps_version = "stable_22Jul2025_update5" %}
 {% set lammps_date = datetime.datetime.strptime(lammps_version.split('_')[1], "%d%b%Y") %}
 {% set lammps_conda_version = "{:%Y.%m.%d}".format(lammps_date) %}
 {% set proc_type = "cuda" if cuda_compiler_version != "None" else "cpu" %}
@@ -20,12 +20,23 @@ package:
 source:
   - url: https://github.com/deepmodeling/{{ name }}/archive/v{{ version }}.tar.gz
     sha256: 37a86e487c9d4fd3dff497cbbb3cdecc346b01a3381dc65545ffe5182aa5e030
+    patches:
+      - patches/0001-find-external-protobuf-for-tensorflow-2.21.patch
+      - patches/0002-support-lammps-2025-kokkos-api.patch
+      - patches/0004-register-lammps-kokkos-plugin-styles.patch
+      - patches/0005-share-lammps-kokkos-runtime.patch
   - url: https://github.com/lammps/lammps/archive/{{ lammps_version }}.tar.gz
-    sha256: 6112e0cc352c3140a4874c7f74db3c0c8e30134024164509ecf3772b305fde2e
+    sha256: 9d1eb62c47b8bb1c2003dfe5b5e82b3ebef4223b51593f9aec2410c5ec983977
     folder: lammps
+    patches:
+      - patches/0003-kokkos-build-cuda-fatbins.patch
 
 build:
   number: 5
+  # Kokkos calls the CUDA driver API directly.  The real libcuda is supplied
+  # by the host NVIDIA driver rather than by a conda runtime package.
+  missing_dso_whitelist:
+    - "*/libcuda.so.1"  # [linux and cuda_compiler_version != "None"]
   string: cuda{{ cuda_compiler_version | replace('.', '') }}h{{ PKG_HASH }}_{{ mpi_prefix }}_{{ PKG_BUILDNUM }}  # [cuda_compiler_version != "None"]
   string: cpu_h{{ PKG_HASH }}_{{ mpi_prefix }}_{{ PKG_BUILDNUM }}  # [cuda_compiler_version == "None"]
   run_exports:
@@ -76,17 +87,21 @@ requirements:
     - libtorch * {{ proc_type }}*
     - setuptools_scm
     - {{ mpi }}
-    - cuda-cudart-dev  # [(cuda_compiler_version or "").startswith("12")]
-    - cuda-version {{ cuda_compiler_version }}  # [(cuda_compiler_version or "").startswith("12")]
+    # Keep all CUDA toolkit dependencies aligned with the selected compiler.
+    - cuda-cudart-dev  # [cuda_compiler_version != "None"]
+    # Kokkos' exported CMake package resolves the CUDA driver target while
+    # compiling the GPU-resident LAMMPS plugin.
+    - cuda-driver-dev  # [cuda_compiler_version != "None"]
+    - cuda-version {{ cuda_compiler_version }}  # [cuda_compiler_version != "None"]
     # require by pytorch
-    - libcublas-dev    # [(cuda_compiler_version or "").startswith("12")]
-    - libcurand-dev  # [(cuda_compiler_version or "").startswith("12")]
-    - libcufft-dev     # [(cuda_compiler_version or "").startswith("12")]
-    - cuda-nvrtc-dev   # [(cuda_compiler_version or "").startswith("12")]
-    - cuda-nvtx-dev    # [(cuda_compiler_version or "").startswith("12")]
-    - libcusparse-dev  # [(cuda_compiler_version or "").startswith("12")]
-    - libcusolver-dev  # [(cuda_compiler_version or "").startswith("12")]
-    - libcudss-dev     # [(cuda_compiler_version or "").startswith("12")]
+    - libcublas-dev    # [cuda_compiler_version != "None"]
+    - libcurand-dev  # [cuda_compiler_version != "None"]
+    - libcufft-dev     # [cuda_compiler_version != "None"]
+    - cuda-nvrtc-dev   # [cuda_compiler_version != "None"]
+    - cuda-nvtx-dev    # [cuda_compiler_version != "None"]
+    - libcusparse-dev  # [cuda_compiler_version != "None"]
+    - libcusolver-dev  # [cuda_compiler_version != "None"]
+    - libcudss-dev     # [cuda_compiler_version != "None"]
     - dependency-groups
     - libabseil
     - tomli
@@ -99,7 +114,10 @@ requirements:
     - {{ mpi }}
 
   run_constrained:
-    - lammps {{ lammps_conda_version }} *_{{ mpi_prefix }}_*
+    # The Kokkos plugin shares LAMMPS' ABI; constrain the matching processor
+    # variant so a CPU/GPU mismatch cannot be solved at runtime.
+    - lammps {{ lammps_conda_version }} cuda{{ cuda_compiler_version | replace('.', '') }}*_{{ mpi_prefix }}_*  # [cuda_compiler_version != "None"]
+    - lammps {{ lammps_conda_version }} cpu_*_{{ mpi_prefix }}_*  # [cuda_compiler_version == "None"]
 
 test:
   commands:
@@ -191,13 +209,20 @@ outputs:
         - deepmd.tf
         - deepmd.pt
       requires:
+        - abi3audit  # [is_abi3]
         - pip
-        - lammps  # [not aarch64]
+        # Match the LAMMPS processor variant used to build the plugin.
+        - cuda-driver-dev  # [linux and cuda_compiler_version != "None"]
+        - lammps {{ lammps_conda_version }} cuda{{ cuda_compiler_version | replace('.', '') }}*_{{ mpi_prefix }}_*  # [cuda_compiler_version != "None"]
+        - lammps {{ lammps_conda_version }} cpu_*_{{ mpi_prefix }}_*  # [cuda_compiler_version == "None" and not aarch64]
         # Exercise both the build interpreter and a later CPython without
         # adding jobs to the matrix.
         - python {{ python_min }}  # [mpi == "mpich"]
         - python 3.12  # [mpi == "openmpi"]
       commands:
+        # The bundled extension modules must remain independent of a specific
+        # CPython ABI when the output is marked python_version_independent.
+        - abi3audit "${SP_DIR}"/deepmd/lib/*.so -s -v --assume-minimum-abi3 {{ python_min }}  # [is_abi3]
         - pip check
         - dp -h
         - dp train -h
@@ -208,6 +233,16 @@ outputs:
         - dp train water_se_a.json
         - dp freeze -o frozen_model.pb
         - export OMPI_MCA_plm=isolated OMPI_MCA_btl_vader_single_copy_mechanism=none OMPI_MCA_rmaps_base_oversubscribe=yes OMPI_MCA_plm_ssh_agent=false  # [mpi == "openmpi"]
+        # GitHub's CUDA runners do not expose the NVIDIA driver library.  The
+        # development stub exercises plugin loading without requiring hardware.
+        - export LD_PRELOAD="$PREFIX/lib/stubs/libcuda.so"  # [linux and cuda_compiler_version != "None"]
+        - printf 'plugin list\ninfo styles pair\n' | lmp_mpi -log none -echo none -in /dev/stdin > lammps-pair-styles.txt  # [cuda_compiler_version != "None"]
+        - grep -q "deepmd/kk" lammps-pair-styles.txt  # [cuda_compiler_version != "None"]
+        - grep -q "dpa4spin/kk" lammps-pair-styles.txt  # [cuda_compiler_version != "None"]
+        - grep -q "pair style plugin deepmd/kk/device" lammps-pair-styles.txt  # [cuda_compiler_version != "None"]
+        - grep -q "pair style plugin deepmd/kk/host" lammps-pair-styles.txt  # [cuda_compiler_version != "None"]
+        - grep -q "pair style plugin dpa4spin/kk/device" lammps-pair-styles.txt  # [cuda_compiler_version != "None"]
+        - grep -q "pair style plugin dpa4spin/kk/host" lammps-pair-styles.txt  # [cuda_compiler_version != "None"]
         - mpiexec -n 1 lmp_mpi -in in.lammps  # [not aarch64]
 
 about:
