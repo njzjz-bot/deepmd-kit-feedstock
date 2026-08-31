@@ -92,6 +92,10 @@ requirements:
     # Kokkos' exported CMake package resolves the CUDA driver target while
     # compiling the GPU-resident LAMMPS plugin.
     - cuda-driver-dev  # [cuda_compiler_version != "None"]
+    # CMake's CUDA compiler identification resolves cicc through the target
+    # prefix; provide the nvvm target symlink in the host environment as well
+    # as the compiler's build environment.
+    - cuda-nvvm-dev_{{ target_platform }}  # [cuda_compiler_version != "None"]
     - cuda-version {{ cuda_compiler_version }}  # [cuda_compiler_version != "None"]
     # require by pytorch
     - libcublas-dev    # [cuda_compiler_version != "None"]
