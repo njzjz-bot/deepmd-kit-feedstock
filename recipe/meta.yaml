@@ -215,9 +215,10 @@ outputs:
         - cuda-driver-dev  # [linux and cuda_compiler_version != "None"]
         - lammps {{ lammps_conda_version }} cuda{{ cuda_compiler_version | replace('.', '') }}*_{{ mpi_prefix }}_*  # [cuda_compiler_version != "None"]
         - lammps {{ lammps_conda_version }} cpu_*_{{ mpi_prefix }}_*  # [cuda_compiler_version == "None" and not aarch64]
-        # Exercise both the build interpreter and a later CPython without
-        # adding jobs to the matrix.
-        - python {{ python_min }}  # [mpi == "mpich"]
+        # nvalchemi-toolkit-ops, used by the PyTorch backend, supports Python
+        # 3.11+ only.  Keep the MPICH test on the oldest solvable interpreter;
+        # abi3audit below still verifies compatibility with python_min (3.10).
+        - python 3.11  # [mpi == "mpich"]
         - python 3.12  # [mpi == "openmpi"]
       commands:
         # The bundled extension modules must remain independent of a specific
